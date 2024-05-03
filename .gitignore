@@ -1,2 +1,4 @@
 wmt14/*
 __pycache__/
+*.pth
+events*

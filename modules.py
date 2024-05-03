@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import BertTokenizer
-from position_encodings import SinusoidalPositionEncoding, RelativePositionEncoding
+from position_encodings import SinusoidalPositionEncoding, RelativePositionEncoding, RotaryPositionEncoding
 
-tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
+tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased',device_map='cuda')
 
 class RPEMultiHeadAttention(nn.Module):
     def __init__(self, d_model, num_heads):
@@ -23,11 +23,11 @@ class RPEMultiHeadAttention(nn.Module):
         self.out_relative_position_embedding = RelativePositionEncoding(self.depth)
 
     def forward(self, query, key, value, mask=None, key_padding_mask=None):
-        batch_size = query.shape[0]
+        batch_size = query.shape[1]
 
-        query = self.query_projection(query) # B, Lq, D
-        key = self.key_projection(key) # B, Lk, D
-        value = self.value_projection(value)
+        query = self.query_projection(query).transpose(0, 1).contiguous() # B, Lq, D
+        key = self.key_projection(key).transpose(0, 1).contiguous() # B, Lk, D
+        value = self.value_projection(value).transpose(0, 1).contiguous()
 
         query = query.view(batch_size, -1, self.num_heads, self.depth).transpose(1, 2) # B, H, Lq, d
         key = key.view(batch_size, -1, self.num_heads, self.depth).transpose(1, 2) # B, H, Lk, d
@@ -67,9 +67,57 @@ class RPEMultiHeadAttention(nn.Module):
         out_relative_position_scores = (attention_weights.unsqueeze(-1) * out_relative_position).sum(dim=-2) # (B, H, Lq, d)
         attention_output = attention_output + out_relative_position_scores
 
+        attention_output = attention_output.permute(2,0,1,3).contiguous().view(-1, batch_size, self.d_model) # (Lq, B, D)
+        
+        return attention_output
+    
+class RoPEMultiHeadAttention(nn.Module):
+    def __init__(self, d_model, num_heads):
+        super(RoPEMultiHeadAttention, self).__init__()
+        self.num_heads = num_heads
+        self.d_model = d_model
+        assert d_model % num_heads == 0
+        self.depth = d_model // num_heads
+        self.batch_first = True
 
-        attention_output = attention_output.transpose(1, 2).contiguous().view(batch_size, -1, self.d_model) # (B, Lq, D)
+        self.query_projection = nn.Linear(d_model, d_model)
+        self.key_projection = nn.Linear(d_model, d_model)
+        self.value_projection = nn.Linear(d_model, d_model)
 
+        self.rope = RotaryPositionEncoding(num_heads, d_model)
+
+    def forward(self, query, key, value, mask=None, key_padding_mask=None):
+        batch_size = query.shape[1]
+
+        query = self.query_projection(query).transpose(0, 1).contiguous() # B, Lq, D
+        key = self.key_projection(key).transpose(0, 1).contiguous() # B, Lk, D
+        value = self.value_projection(value).transpose(0, 1).contiguous()
+
+        query = query.view(batch_size, -1, self.num_heads, self.depth).transpose(1, 2) # B, H, Lq, d
+        key = key.view(batch_size, -1, self.num_heads, self.depth).transpose(1, 2) # B, H, Lk, d
+        value = value.view(batch_size, -1, self.num_heads, self.depth).transpose(1, 2)
+        
+        query, key = self.rope(query, key)
+        
+        sqrt_d = torch.sqrt(torch.tensor(self.depth, dtype=torch.float32).to(query.device))
+        # (B, H, Lq, d) * (B, H, d, Lk) -> (B, H, Lq, Lk)
+        scores = torch.matmul(query, key.transpose(-2, -1)) / sqrt_d
+
+        if mask is not None:
+            attn_mask = (mask != 0).to(query.device)
+            scores = scores.masked_fill(attn_mask, float('-inf'))
+        
+        if key_padding_mask is not None:
+            key_padding_mask = (key_padding_mask != 0).to(query.device)
+            scores = scores.masked_fill(key_padding_mask, float('-inf'))
+
+        attention_weights = F.softmax(scores, dim=-1) # (B, H, Lq, Lk)
+
+        # (B, H, Lq, Lk) * (B, H, Lk, d) -> (B, H, Lq, d)
+        attention_output = torch.matmul(attention_weights, value)
+
+        attention_output = attention_output.permute(2,0,1,3).contiguous().view(-1, batch_size, self.d_model) # (Lq, B, D)
+        
         return attention_output
 
 class PositionwiseFeedForward(nn.Module):
@@ -82,10 +130,16 @@ class PositionwiseFeedForward(nn.Module):
         x = self.linear2(F.relu(self.linear1(x)))
         return x
     
-class RPEEncoderLayer(nn.Module):
-    def __init__(self, d_model, num_heads, dim_feedforward, dropout):
-        super(RPEEncoderLayer, self).__init__()
-        self.self_attn = RPEMultiHeadAttention(d_model, num_heads)
+class EncoderLayer(nn.Module):
+    def __init__(self,pe_type, d_model, num_heads, dim_feedforward, dropout):
+        super(EncoderLayer, self).__init__()
+        if pe_type == 'rpe':
+            self.self_attn = RPEMultiHeadAttention(d_model, num_heads)
+        elif pe_type == 'rope':
+            self.self_attn = RoPEMultiHeadAttention(d_model, num_heads)
+        else:
+            raise NotImplementedError
+        
         self.feed_forward = PositionwiseFeedForward(d_model, dim_feedforward, dropout)
         self.layer_norm1 = nn.LayerNorm(d_model)
         self.layer_norm2 = nn.LayerNorm(d_model)
@@ -99,11 +153,18 @@ class RPEEncoderLayer(nn.Module):
         
         return x
 
-class RPEDecoderLayer(nn.Module):
-    def __init__(self, d_model, num_heads, dim_feedforward, dropout):
-        super(RPEDecoderLayer, self).__init__()
-        self.self_attn = RPEMultiHeadAttention(d_model, num_heads)
-        self.multihead_attn = RPEMultiHeadAttention(d_model, num_heads)
+class DecoderLayer(nn.Module):
+    def __init__(self, pe_type, d_model, num_heads, dim_feedforward, dropout):
+        super(DecoderLayer, self).__init__()
+        if pe_type == 'rpe':
+            self.self_attn = RPEMultiHeadAttention(d_model, num_heads)
+            self.multihead_attn = RPEMultiHeadAttention(d_model, num_heads)
+        elif pe_type == 'rope':
+            self.self_attn = RoPEMultiHeadAttention(d_model, num_heads)
+            self.multihead_attn = RoPEMultiHeadAttention(d_model, num_heads)
+        else:
+            raise NotImplementedError
+        
         self.feed_forward = PositionwiseFeedForward(d_model, dim_feedforward, dropout)
         self.layer_norm1 = nn.LayerNorm(d_model)
         self.layer_norm2 = nn.LayerNorm(d_model)

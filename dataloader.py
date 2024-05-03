@@ -28,13 +28,13 @@ for file_path in file_paths:
     elif file_path.startswith("validation"):
         validation_file_paths.append(os.path.join(dataset_path, file_path))
 
+test_dataset = ParquetDataset(test_file_paths, 0)
 
 def get_training_dataset(id, batch_size=8):
     train_dataset = ParquetDataset(train_file_paths, id)
     return DataLoader(train_dataset, batch_size, shuffle=True)
 
 def get_test_dataset():
-    test_dataset = ParquetDataset(test_file_paths, 0)
     return DataLoader(test_dataset, batch_size=1, shuffle=True)
 
 def get_validation_dataset():

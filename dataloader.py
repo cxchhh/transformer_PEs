@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import pyarrow.parquet as pq
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, ConcatDataset
 
 class ParquetDataset(Dataset):
     def __init__(self, file_paths, id):
@@ -30,8 +30,10 @@ for file_path in file_paths:
 
 test_dataset = ParquetDataset(test_file_paths, 0)
 
-def get_training_dataset(id, batch_size=8):
-    train_dataset = ParquetDataset(train_file_paths, id)
+def get_training_dataset(num, batch_size=8):
+    train_dataset = ParquetDataset(train_file_paths, 0)
+    for i in range(1, num):
+        train_dataset = ConcatDataset([train_dataset, ParquetDataset(train_file_paths, i)]) 
     return DataLoader(train_dataset, batch_size, shuffle=True)
 
 def get_test_dataset():

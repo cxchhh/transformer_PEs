@@ -22,8 +22,10 @@ class RPEMultiHeadAttention(nn.Module):
         self.relative_position_embedding = RelativePositionEncoding(self.depth)
         self.out_relative_position_embedding = RelativePositionEncoding(self.depth)
 
-    def forward(self, query, key, value, mask=None, key_padding_mask=None):
+    def forward(self, query, key, value, attn_mask=None, key_padding_mask=None):
         batch_size = query.shape[1]
+        src_len = key.shape[0]
+        tgt_len = query.shape[0]
 
         query = self.query_projection(query).transpose(0, 1).contiguous() # B, Lq, D
         key = self.key_projection(key).transpose(0, 1).contiguous() # B, Lk, D
@@ -33,8 +35,6 @@ class RPEMultiHeadAttention(nn.Module):
         key = key.view(batch_size, -1, self.num_heads, self.depth).transpose(1, 2) # B, H, Lk, d
         value = value.view(batch_size, -1, self.num_heads, self.depth).transpose(1, 2)
 
-        len_q = query.shape[2]
-
         
         sqrt_d = torch.sqrt(torch.tensor(self.depth, dtype=torch.float32).to(query.device))
         # (B, H, Lq, d) * (B, H, d, Lk) -> (B, H, Lq, Lk)
@@ -43,21 +43,31 @@ class RPEMultiHeadAttention(nn.Module):
         relative_position = self.relative_position_embedding(query, key) # (Lq, Lk, d)
 
         # (Lq, B*H, d) * (Lq, d, Lk) -> (Lq, B*H, Lk)
-        m1 = query.permute(2, 0, 1, 3).reshape(len_q, batch_size * self.num_heads, self.depth)
+        m1 = query.permute(2, 0, 1, 3).reshape(tgt_len, batch_size * self.num_heads, self.depth)
         m2 = relative_position.transpose(-2, -1)
         relative_position_scores = torch.matmul(m1,m2) / sqrt_d # (Lq, B*H, Lk)
-        relative_position_scores = relative_position_scores.reshape(len_q, batch_size, self.num_heads, -1).permute(1,2,0,3) # (B, H, Lq, Lk)
+        relative_position_scores = relative_position_scores.reshape(tgt_len, batch_size, self.num_heads, -1).permute(1,2,0,3) # (B, H, Lq, Lk)
                                                 
         scores = scores + relative_position_scores 
 
-        if mask is not None:
-            attn_mask = (mask != 0).to(query.device)
+        if key_padding_mask is not None:
+            key_padding_mask = key_padding_mask.view(batch_size,1,1,src_len) \
+                    .expand(-1, self.num_heads, -1, -1).reshape(batch_size * self.num_heads, 1, src_len)
+            if attn_mask is None:
+                attn_mask = key_padding_mask
+            else:
+                attn_mask = attn_mask + key_padding_mask
+        
+        if attn_mask is not None:
+            if attn_mask.size(0) == 1 and attn_mask.dim() == 3:
+                attn_mask = attn_mask.unsqueeze(0)
+            else:
+                attn_mask = attn_mask.view(batch_size, self.num_heads, -1, src_len)
+
+            attn_mask = (attn_mask != 0).to(query.device)
+            #import pdb; pdb.set_trace()
             scores = scores.masked_fill(attn_mask, float('-inf'))
         
-        if key_padding_mask is not None:
-            key_padding_mask = (key_padding_mask != 0).to(query.device)
-            scores = scores.masked_fill(key_padding_mask, float('-inf'))
-
         attention_weights = F.softmax(scores, dim=-1) # (B, H, Lq, Lk)
 
         # (B, H, Lq, Lk) * (B, H, Lk, d) -> (B, H, Lq, d)
@@ -86,8 +96,9 @@ class RoPEMultiHeadAttention(nn.Module):
 
         self.rope = RotaryPositionEncoding(num_heads, d_model)
 
-    def forward(self, query, key, value, mask=None, key_padding_mask=None):
+    def forward(self, query, key, value, attn_mask=None, key_padding_mask=None):
         batch_size = query.shape[1]
+        src_len = query.shape[0]
 
         query = self.query_projection(query).transpose(0, 1).contiguous() # B, Lq, D
         key = self.key_projection(key).transpose(0, 1).contiguous() # B, Lk, D
@@ -103,13 +114,23 @@ class RoPEMultiHeadAttention(nn.Module):
         # (B, H, Lq, d) * (B, H, d, Lk) -> (B, H, Lq, Lk)
         scores = torch.matmul(query, key.transpose(-2, -1)) / sqrt_d
 
-        if mask is not None:
-            attn_mask = (mask != 0).to(query.device)
-            scores = scores.masked_fill(attn_mask, float('-inf'))
-        
         if key_padding_mask is not None:
-            key_padding_mask = (key_padding_mask != 0).to(query.device)
-            scores = scores.masked_fill(key_padding_mask, float('-inf'))
+            key_padding_mask = key_padding_mask.view(batch_size,1,1,src_len) \
+                    .expand(-1, self.num_heads, -1, -1).reshape(batch_size * self.num_heads, 1, src_len)
+            if attn_mask is None:
+                attn_mask = key_padding_mask
+            else:
+                attn_mask = attn_mask + key_padding_mask
+        
+        if attn_mask is not None:
+            if attn_mask.size(0) == 1 and attn_mask.dim() == 3:
+                attn_mask = attn_mask.unsqueeze(0)
+            else:
+                attn_mask = attn_mask.view(batch_size, self.num_heads, -1, src_len)
+
+            attn_mask = (attn_mask != 0).to(query.device)
+            #import pdb; pdb.set_trace()
+            scores = scores.masked_fill(attn_mask, float('-inf'))
 
         attention_weights = F.softmax(scores, dim=-1) # (B, H, Lq, Lk)
 

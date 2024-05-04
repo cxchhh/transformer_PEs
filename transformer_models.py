@@ -45,7 +45,7 @@ class MultiPETransformer(nn.Module):
         else:
             raise NotImplementedError
             
-        self.fc = nn.Linear(d_model, NUM_EMB)
+        self.predictor = nn.Linear(d_model, NUM_EMB)
     
     def forward(self, src_tokens, tgt_tokens):
         src_embedded = self.src_embedding(src_tokens) # B, L, D
@@ -56,7 +56,10 @@ class MultiPETransformer(nn.Module):
         else:
             src_embedded = src_embedded.permute(1,0,2) # L, B, D
             tgt_embedded = tgt_embedded.permute(1,0,2)
-        tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt_tokens.shape[1])
-        output = self.transformer(src_embedded, tgt_embedded, tgt_mask=tgt_mask)
-        output = self.fc(output)
+        tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt_tokens.shape[1]).to(tgt_tokens.device)
+        
+        output = self.transformer(src_embedded, tgt_embedded, tgt_mask=tgt_mask,
+                                   src_key_padding_mask=(src_tokens == 0).float(),
+                                   tgt_key_padding_mask=(tgt_tokens == 0).float()
+                                   )
         return output

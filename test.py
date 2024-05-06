@@ -1,16 +1,6 @@
 import torch
-from torch import nn
-from torch.utils.data import Dataset, DataLoader
-from tqdm import tqdm
-from dataloader import get_training_dataset, get_test_dataset
 from modules import tokenizer
 from transformer_models import MultiPETransformer
-from torch.utils.tensorboard import SummaryWriter
-
-LOSS_INTERVAL = 500
-SAVE_INTERVAL = 20000
-CACHE_INTERVAL = 50
-TEST_SIZE = 50
 
 def test(model:MultiPETransformer, src_text):
     src_tokens = tokenizer.batch_encode_plus(
@@ -18,7 +8,7 @@ def test(model:MultiPETransformer, src_text):
     
     start_id = tokenizer.convert_tokens_to_ids(tokenizer.cls_token)
     end_id = tokenizer.convert_tokens_to_ids(tokenizer.sep_token)
-    tgt_len = 128
+    tgt_len = 512
     out_tokens = torch.tensor([[start_id]],dtype=torch.int).cuda()
     model.eval()
     with torch.no_grad():
@@ -37,13 +27,13 @@ def test(model:MultiPETransformer, src_text):
     return out_text
 
 if __name__ == "__main__":
-    wordVec_dim = 128
+    wordVec_dim = 64
     
     pe_type = 'sinpe'
     model = MultiPETransformer(pe_type, d_model=wordVec_dim,nhead=8).cuda()
-    model.load_state_dict(torch.load(f"./checkpoints/{pe_type}/{pe_type}_model_60000.pth")['model'])
+    model.load_state_dict(torch.load(f"./checkpoints/{pe_type}/{pe_type}_model.pth")['model'])
 
-    src_text = "It's a sunny day."
+    src_text = "Man, what can I say?"
     out_text = test(model, src_text)
     print("fr:", out_text)
 

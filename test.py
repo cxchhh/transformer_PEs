@@ -29,11 +29,16 @@ def test(model:MultiPETransformer, src_text):
 if __name__ == "__main__":
     wordVec_dim = 64
     
-    pe_type = 'sinpe'
-    model = MultiPETransformer(pe_type, d_model=wordVec_dim,nhead=8).cuda()
-    model.load_state_dict(torch.load(f"./checkpoints/{pe_type}/{pe_type}_model.pth")['model'])
+    models = []
+
+    pe_types = ['nonepe','sinpe','rpe','rope']
+    for pe_type in pe_types:
+        model = MultiPETransformer(pe_type, d_model=wordVec_dim).cuda()
+        model.load_state_dict(torch.load(f"./checkpoints/{pe_type}/{pe_type}_model.pth")['model'])
+        models.append(model)
 
     src_text = "Man, what can I say?"
-    out_text = test(model, src_text)
-    print("fr:", out_text)
+    for model in models:
+        out_text = test(model, src_text)
+        print("fr:", out_text)
 

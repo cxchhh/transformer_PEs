@@ -30,7 +30,7 @@ for file_path in file_paths:
 
 test_dataset = ParquetDataset(test_file_paths, 0)
 
-def get_training_dataset(num, batch_size=8):
+def get_training_dataset(num, batch_size):
     train_dataset = ParquetDataset(train_file_paths, 0)
     for i in range(1, num):
         train_dataset = ConcatDataset([train_dataset, ParquetDataset(train_file_paths, i)]) 
@@ -40,5 +40,5 @@ def get_test_dataset():
     return DataLoader(test_dataset, batch_size=1, shuffle=True)
 
 def get_validation_dataset():
-    validation_dataset = ParquetDataset(validation_file_paths)
+    validation_dataset = ParquetDataset(validation_file_paths, 0)
     return DataLoader(validation_dataset, batch_size=1, shuffle=True)

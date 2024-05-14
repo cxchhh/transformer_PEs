@@ -63,3 +63,26 @@ class MultiPETransformer(nn.Module):
                                    tgt_key_padding_mask=(tgt_tokens == 0).float()
                                    )
         return output
+    
+    def encode(self, src_tokens):
+        src_embedded = self.src_embedding(src_tokens) # B, L, D
+        if self.need_sinpe:
+            src_embedded = self.pe(src_embedded).permute(1,0,2) # L, B, D
+        else:
+            src_embedded = src_embedded.permute(1,0,2) # L, B, D
+        
+        memory = self.transformer.encoder(src_embedded, src_key_padding_mask=(src_tokens == 0).float())
+
+        return memory
+    
+    def decode(self, memory, tgt_tokens):
+        tgt_embedded = self.tgt_embedding(tgt_tokens)
+        if self.need_sinpe:
+            tgt_embedded = self.pe(tgt_embedded).permute(1,0,2)
+        else:
+            tgt_embedded = tgt_embedded.permute(1,0,2)
+        tgt_mask = nn.Transformer.generate_square_subsequent_mask(tgt_tokens.shape[1]).to(tgt_tokens.device)
+
+        output = self.transformer.decoder(tgt_embedded, memory, tgt_mask=tgt_mask, 
+                                          tgt_key_padding_mask=(tgt_tokens == 0).float())
+        return output

@@ -11,9 +11,11 @@ def test(model:MultiPETransformer, src_text):
     tgt_len = 512
     out_tokens = torch.tensor([[start_id]],dtype=torch.int).cuda()
     model.eval()
+    memory = model.encode(src_tokens)
+    # import pdb; pdb.set_trace()
     with torch.no_grad():
         for i in range(tgt_len):
-            out = model(src_tokens, out_tokens)
+            out = model.decode(memory, out_tokens)
             out_prob = model.predictor(out[-1, :]).transpose(0,1).contiguous()
             next_out_token = torch.argmax(out_prob, dim=0).unsqueeze(0)
             #import pdb; pdb.set_trace()
@@ -37,8 +39,10 @@ if __name__ == "__main__":
         model.load_state_dict(torch.load(f"./checkpoints/{pe_type}/{pe_type}_model.pth")['model'])
         models.append(model)
 
-    src_text = "Man, what can I say?"
-    for model in models:
-        out_text = test(model, src_text)
-        print("fr:", out_text)
+    while(True):
+        src_text = input("en: ")
+        for model in models:
+            out_text = test(model, src_text)
+            print(f"{model.pe_type} fr:", out_text)
+        print()
 

@@ -5,11 +5,12 @@ from modules import tokenizer
 from transformer_models import MultiPETransformer
 from dataloader import get_test_dataset
 from torchtext.data.metrics import bleu_score
+import matplotlib.pyplot as plt
 
 MAX_LEN = 512
 
 def eval_models(models, dataset):
-    for model in models:
+    for mi, model in enumerate(models):
         model:MultiPETransformer 
         bleu_total = 0
         bleu_avg = 0
@@ -36,8 +37,10 @@ def eval_models(models, dataset):
 
             out_tokens = torch.tensor([[start_id]],dtype=torch.int).cuda()
             
+            memory = model.encode(src_tokens)
+
             for i in range(MAX_LEN):
-                out = model(src_tokens, out_tokens)
+                out = model.decode(memory, out_tokens)
                 out_prob = model.predictor(out[-1, :]).transpose(0,1).contiguous()
                 next_out_token = torch.argmax(out_prob, dim=0).unsqueeze(0)
                 #import pdb; pdb.set_trace()
@@ -65,6 +68,9 @@ def eval_models(models, dataset):
             #     print(bleu_avg)
         
         print(f"model {model.pe_type}'s bleu:", bleu_avg)
+
+        plt.bar(model.pe_type, bleu_avg,color='skyblue')
+        plt.savefig('eval_logs/bleu.png')
             
 
 if __name__ == "__main__":
@@ -73,6 +79,8 @@ if __name__ == "__main__":
     models = []
 
     pe_types = ['nonepe','sinpe','rpe','rope']
+    plt.xticks([0,1,2,3],pe_types)
+    plt.ylim((0.5,1.0))
     '''
     nonope: 0.02823680870810569
     sinpe: 0.08826489413242081

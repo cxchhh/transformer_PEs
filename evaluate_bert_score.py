@@ -8,7 +8,6 @@ from transformer_models import MultiPETransformer
 from dataloader import get_test_dataset
 from bert_score import BERTScorer
 from transformers import BertModel
-from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
 
 model_name = 'bert-base-multilingual-cased'
@@ -17,7 +16,7 @@ scorer = BERTScorer(model_type=model_name, num_layers=4)
 
 MAX_LEN = 512
 
-def eval_models(models, dataset, writer: SummaryWriter):
+def eval_models(models, dataset):
     colors = ['orange','y','g','b']
     
     for mi, model in enumerate(models):
@@ -47,12 +46,14 @@ def eval_models(models, dataset, writer: SummaryWriter):
             
 
             out_tokens = torch.tensor([[start_id]],dtype=torch.int).cuda()
-            
+
+            memory = model.encode(src_tokens)
+
             for i in range(MAX_LEN):
-                out = model(src_tokens, out_tokens)
+                out = model.decode(memory, out_tokens)
                 out_prob = model.predictor(out[-1, :]).transpose(0,1).contiguous()
                 next_out_token = torch.argmax(out_prob, dim=0).unsqueeze(0)
-                #import pdb; pdb.set_trace()
+               
                 out_tokens = torch.concat([out_tokens, next_out_token],dim=1)
                 
                 if next_out_token.item() == end_id:
@@ -69,7 +70,6 @@ def eval_models(models, dataset, writer: SummaryWriter):
             scatters_y.append(bert_score.item())
             
             if iter % 100 == 0:
-                #sca.scatter(scatters_x, scatters_y, alpha=0.1)
                 plt.scatter(scatters_x, scatters_y, c=colors[mi], alpha=0.01)
                 plt.savefig('eval_logs/bert_scores.png')
                 scatters_x.clear()
@@ -91,22 +91,20 @@ if __name__ == "__main__":
 
     pe_types = ['nonepe','sinpe','rpe','rope']
     '''
-    nonope: 0.02823680870810569
-    sinpe: 0.08826489413242081
-    rpe: 0.17756954479163692
-    rope: 0.16575512542695434
+    nonope: 0.6686
+    sinpe: 0.7074
+    rpe: 0.7584
+    rope: 0.7500
     '''
     for pe_type in pe_types:
         model = MultiPETransformer(pe_type, d_model=wordVec_dim).cuda()
         model.load_state_dict(torch.load(f"./checkpoints/{pe_type}/{pe_type}_model.pth")['model'])
         model.eval()
         models.append(model)
-
-    writer = SummaryWriter(f"./eval_logs/bert_score")
     
     test_dataset = get_test_dataset()
 
     with torch.no_grad():
-        eval_models(models, test_dataset, writer)
+        eval_models(models, test_dataset)
 
 

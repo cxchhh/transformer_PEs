@@ -40,9 +40,9 @@ if __name__ == "__main__":
         models.append(model)
 
     while(True):
-        src_text = input("en: ")
+        src_text = input("English: ")
         for model in models:
             out_text = test(model, src_text)
-            print(f"{model.pe_type} fr:", out_text)
+            print(f"French ({model.pe_type}):", out_text)
         print()
 
